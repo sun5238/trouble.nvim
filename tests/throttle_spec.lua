@@ -60,4 +60,28 @@ describe("throttle lifecycle", function()
     vim.wait(120)
     assert.same({ "first", "second" }, calls)
   end)
+
+  it("follows a returned promise without polling a stale running flag", function()
+    local Promise = require("trouble.promise")
+    local calls = {}
+    local checks = 0
+    local throttle = Util.throttle(function(value)
+      calls[#calls + 1] = value
+      return Promise.new(function(resolve, reject)
+        vim.defer_fn(value == "first" and function() reject("expected failure") end or resolve, 40)
+      end)
+    end, {
+      ms = 10,
+      is_running = function()
+        checks = checks + 1
+        return true
+      end,
+    })
+    throttle("first")
+    vim.wait(20)
+    throttle("second")
+    vim.wait(120)
+    assert.same({ "first", "second" }, calls)
+    assert(checks <= 2, "a returned promise should not require periodic polling")
+  end)
 end)

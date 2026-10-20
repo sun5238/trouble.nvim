@@ -138,18 +138,25 @@ function M.throttle(fn, opts)
   local running = false -- from run() till end of fn with is_running()
   local schedule
 
-  local function check()
+  local function finish()
     if not running or pending then
-      return
-    end
-    if opts.is_running and opts.is_running() then
-      -- Only poll while asynchronous work is still in flight.
-      vim.defer_fn(check, 10)
       return
     end
     running = false
     if args then -- schedule if there are pending args
       schedule()
+    end
+  end
+
+  local function check()
+    if not running or pending then
+      return
+    end
+    if opts.is_running and opts.is_running() then
+      -- Fallback for asynchronous callbacks that do not return a promise.
+      vim.defer_fn(check, 10)
+    else
+      finish()
     end
   end
 
@@ -159,20 +166,24 @@ function M.throttle(fn, opts)
     running = true
     last = uv.now()
     vim.schedule(function()
-      xpcall(function()
+      local ok, result = xpcall(function()
         local current = args
         args = nil
         if not current then
           return M.debug("Empty args. This should not happen.")
         end
-        fn(vim.F.unpack_len(current))
+        return fn(vim.F.unpack_len(current))
       end, function(err)
         vim.schedule(function()
           M.error(err)
         end)
       end)
       pending = false
-      check()
+      if ok and opts.is_running and type(result) == "table" and type(result.next) == "function" then
+        result:next(finish, finish)
+      else
+        check()
+      end
     end)
   end
 
